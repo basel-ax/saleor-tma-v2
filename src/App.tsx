@@ -437,8 +437,8 @@ export default function App() {
 
     mainButton.setParams({
       text: `Review order · ${formatMoney(total.amount, total.currency)}`,
-      bgColor: buttonColor || undefined,
-      textColor: buttonTextColor || undefined,
+      bgColor: (buttonColor as `#${string}`) || undefined,
+      textColor: (buttonTextColor as `#${string}`) || undefined,
       isVisible: true,
       isEnabled: true,
     });
