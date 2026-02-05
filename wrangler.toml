@@ -1,0 +1,6 @@
+name = "saleor-tma-v2"
+compatibility_date = "2026-02-05"
+pages_build_output_dir = "./dist"
+
+[build]
+command = "npm run build"
