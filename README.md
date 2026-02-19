@@ -41,26 +41,37 @@ saleor-tma-v2/
 
 ### Installation
 
-```saleor-tma-v2/README.md#L71-75
+```bash
 npm install
 ```
+
+This will install all dependencies including `wrangler` (Cloudflare CLI) for deployment.
 
 ### Environment variables
 
 Create a `.env` (or `.env.local`) file in the project root to override defaults:
 
-```saleor-tma-v2/README.md#L79-88
+```bash
+# Saleor configuration (for build-time)
 VITE_SALEOR_API_URL=https://demo.saleor.io/graphql/
 VITE_SALEOR_CHANNEL=default-channel
 VITE_SALEOR_DOCS_URL=https://docs.saleor.io
+
+# Cloudflare API Token (for deployment via CLI)
+# Only needed if using API token authentication (Option B)
+# Get your token from: https://dash.cloudflare.com/profile/api-tokens
+CLOUDFLARE_API_TOKEN=your_token_here
 ```
 
 Optional variables you may add later:
 
 - `VITE_SALEOR_CHANNEL` – target Saleor channel for product availability (defaults to `default-channel`).
 - `VITE_TG_BOT_USERNAME` – can be used if you surface deep links to the bot inside the Mini App.
+- `CLOUDFLARE_API_TOKEN` – required only if deploying via CLI with API token authentication (see [Deployment](#deployment-to-cloudflare-pages) section).
 
 > Vite automatically exposes variables prefixed with `VITE_` to the client bundle.
+> 
+> **Note:** The `.env` file is gitignored. See `.env.example` for a template.
 
 ### Running locally
 
@@ -105,6 +116,69 @@ The deployment process mirrors the best practices from the Acceptto scaffold, si
   - **Account: Cloudflare Pages — Edit**
   - **Account: Workers Scripts — Edit** (optional, but useful if you later add a worker)
   - **Account: D1 — Edit** (optional, mirrors Acceptto’s token scope for future backend needs)
+
+#### Quick Setup: Cloudflare API Token Authentication
+
+For deploying via Wrangler CLI (`npm run deploy`), you need to authenticate with Cloudflare. Choose one of the following methods:
+
+**Option A: Interactive Login (Recommended for Local Development)**
+
+The easiest way to authenticate is using interactive login:
+
+```bash
+npx wrangler login
+```
+
+This will open your browser to authenticate via OAuth. No token setup needed!
+
+**Option B: API Token (Required for CI/Automation)**
+
+If you're deploying from CI/CD or prefer using an API token:
+
+1. **Create API Token:**
+   - Go to: https://dash.cloudflare.com/profile/api-tokens
+   - Click **"Create Token"**
+   - Use the **"Edit Cloudflare Workers"** template, or create a custom token with:
+     - **Account → Cloudflare Pages → Edit** (required)
+     - **Account → Workers Scripts → Edit** (optional, but recommended)
+   - Set account resources to your specific account
+   - Click **"Continue to summary"** → **"Create Token"**
+   - **Copy the token immediately** (you won't see it again!)
+
+2. **Authenticate Wrangler:**
+
+   **Linux/Mac:**
+   ```bash
+   # Set as environment variable
+   export CLOUDFLARE_API_TOKEN="your_token_here"
+   
+   # Or add to your shell profile (~/.bashrc or ~/.zshrc)
+   echo 'export CLOUDFLARE_API_TOKEN="your_token_here"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   $env:CLOUDFLARE_API_TOKEN="your_token_here"
+   
+   # Or set permanently:
+   [System.Environment]::SetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'your_token_here', 'User')
+   ```
+
+3. **Verify Authentication:**
+   ```bash
+   npx wrangler whoami
+   ```
+
+   You should see your Cloudflare account email and account ID.
+
+**Token Permissions Summary:**
+
+For Cloudflare Pages deployment via Wrangler CLI, you need:
+- ✅ **Account → Cloudflare Pages → Edit** (required)
+- ✅ **Account → Workers Scripts → Edit** (optional, but recommended)
+
+The Account ID is automatically detected when authenticated, so you don't need to set it manually.
 
 ### 2. Connect repository or upload
 
@@ -199,6 +273,9 @@ Once Pages finishes its first deployment:
 | Main button never appears | Add at least one item to the cart; inside Telegram ensure the Web App is in full-screen mode so buttons can mount |
 | Checkout link fails to open | Telegram might block external links in testing environments; fallback to opening in a new tab works only when not sandboxed |
 | Products/categories empty | Confirm Saleor channel contains collections and products. Try the Saleor demo channel or check API credentials |
+| Authentication error [code: 10000] when deploying | Run `npx wrangler login` or set `CLOUDFLARE_API_TOKEN` environment variable. See [Cloudflare API Token Setup](#quick-setup-cloudflare-api-token-authentication) |
+| Configuration file error: "does not support 'build'" | Remove the `[build]` section from `wrangler.toml`. Pages projects configure builds in the dashboard, not in wrangler.toml |
+| `wrangler: not found` when deploying | Run `npm install` to install dependencies. Wrangler is included as a dev dependency |
 
 ---
 
