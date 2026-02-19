@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/ErrorBoundary.tsx","./src/components/index.ts","./src/hooks/index.ts","./src/hooks/useCart.ts","./src/hooks/useGraphQL.ts","./src/hooks/useToast.ts","./src/types/graphql.ts","./src/types/index.ts","./src/utils/bootstrap.ts","./src/utils/graphql.ts","./src/utils/index.ts"],"version":"5.9.3"}

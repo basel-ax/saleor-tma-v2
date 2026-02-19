@@ -18,6 +18,9 @@ This is a modern Telegram Mini App built with React, TypeScript, and Vite, desig
 - Static hosting ready
 - Telegram authentication via init data
 - GraphQL API integration for product catalog and orders
+- Modular architecture with separated concerns (hooks, utils, components, types)
+- Error boundaries for robust error handling
+- Type-safe GraphQL responses
 
 ## Build and Test Commands
 
@@ -35,10 +38,34 @@ npm run type-check   # Run TypeScript type checking
 
 ## Code Style Guidelines
 
+### Project Structure
+```
+src/
+├── components/          # Reusable React components
+│   ├── ErrorBoundary.tsx
+│   └── index.ts
+├── hooks/              # Custom React hooks
+│   ├── useCart.ts
+│   ├── useGraphQL.ts
+│   ├── useToast.ts
+│   └── index.ts
+├── types/              # TypeScript type definitions
+│   ├── index.ts
+│   └── graphql.ts
+├── utils/              # Utility functions
+│   ├── bootstrap.ts
+│   ├── graphql.ts
+│   └── index.ts
+├── styles/             # CSS styles
+│   └── app.css
+├── App.tsx             # Main application component
+└── main.tsx            # Application entry point
+```
+
 ### Import Organization
 ```typescript
 // 1. React imports
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // 2. Third-party library imports
 import {
@@ -48,12 +75,23 @@ import {
   openLink,
   themeParams,
   useLaunchParams,
-  useRawInitData,
   useSignal,
 } from "@tma.js/sdk-react";
 
-// 3. Local imports (relative paths)
-import App from "./App";
+// 3. Type imports
+import type { Store, Product, Category } from "./types";
+
+// 4. Hook imports
+import { useGraphQL } from "./hooks/useGraphQL";
+import { useCart } from "./hooks/useCart";
+
+// 5. Utility imports
+import { formatMoney, stripHtml } from "./utils";
+
+// 6. Component imports
+import { ErrorBoundary } from "./components";
+
+// 7. Style imports
 import "./styles/app.css";
 ```
 
@@ -176,34 +214,34 @@ const graphQLRequest = useCallback(
 ```
 
 ### Telegram Mini App Integration
-- Initialize SDK properly
+- Initialize SDK properly using `bootstrapTelegramSDK()` utility
 - Handle Telegram-specific UI components
 - Manage theme parameters
 - Implement proper error handling for SDK methods
+- Use error boundaries for React error handling
 
 ```typescript
-function bootstrap() {
-  try {
-    init({ acceptCustomStyles: true });
-  } catch (error) {
-    console.warn("Telegram SDK init failed, continuing in web mode.", error);
-  }
+// SDK initialization is handled in src/utils/bootstrap.ts
+import { bootstrapTelegramSDK } from "./utils/bootstrap";
 
-  try {
-    themeParams.mount();
-    themeParams.bindCssVars();
-  } catch (error) {
-    console.warn("Theme params unavailable.", error);
-  }
+bootstrapTelegramSDK();
 
-  try {
-    miniApp.mount();
-    miniApp.ready();
-  } catch (error) {
-    console.warn("Mini app mount failed.", error);
-  }
-}
+// Error boundaries wrap the app in main.tsx
+<ErrorBoundary>
+  <App />
+</ErrorBoundary>
 ```
+
+### Custom Hooks
+- `useGraphQL()` - Handles GraphQL requests with authentication
+- `useCart()` - Manages shopping cart state and operations
+- `useToast()` - Manages toast notification state
+
+### Error Handling
+- Error boundaries catch React component errors
+- GraphQL errors are properly typed and handled
+- SDK initialization errors are gracefully handled with fallbacks
+- User-friendly error messages via toast notifications
 
 ### CSS and Styling
 - Use CSS custom properties for theming

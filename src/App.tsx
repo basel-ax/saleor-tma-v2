@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   backButton,
   isTMA,
@@ -6,91 +6,45 @@ import {
   openLink,
   themeParams,
   useLaunchParams,
-  useRawInitData,
   useSignal,
 } from "@tma.js/sdk-react";
 
-type Store = {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  image: string;
-  imageAlt: string;
-};
-
-type Product = {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  image: string;
-  imageAlt: string;
-  variantId: string | null;
-  variantName: string;
-  variantSku: string;
-  quantityAvailable: number | null;
-  priceAmount: number | null;
-  priceCurrency: string | null;
-};
-
-type Category = {
-  id: string;
-  name: string;
-  products: Product[];
-};
-
-type CartEntry = {
-  product: Product;
-  quantity: number;
-};
-
-type CartSummary = {
-  items: number;
-  total: {
-    amount: number;
-    currency: string;
-  };
-};
-
-type GraphQLError = {
-  message?: string;
-};
+import type {
+  Store,
+  Product,
+  Category,
+  TelegramUser,
+} from "./types";
+import type {
+  CollectionsResponse,
+  CollectionProductsResponse,
+  CheckoutCreateResponse,
+} from "./types/graphql";
+import { useGraphQL } from "./hooks/useGraphQL";
+import { useCart } from "./hooks/useCart";
+import { useToast } from "./hooks/useToast";
+import {
+  stripHtml,
+  truncateText,
+  formatMoney,
+  buildPseudoEmail,
+} from "./utils";
 
 const DEFAULT_TITLE = "Order goods";
 const DEFAULT_SUBTITLE =
   "Pick a restaurant or shop powered by Saleor to start your Telegram order.";
 
-const DEFAULT_CONFIG = {
-  saleorApiUrl: "https://demo.saleor.io/graphql/",
-  saleorChannel: "default-channel",
-  saleorDocsUrl: "https://docs.saleor.io",
-};
-
 export default function App() {
   const isDark = useSignal(themeParams.isDark);
-  const rawInitData = useRawInitData();
   const launchParams = useLaunchParams(true);
   const isTelegram = useMemo(() => isTMA(), []);
 
-  const config = useMemo(
-    () => ({
-      saleorApiUrl:
-        import.meta.env.VITE_SALEOR_API_URL || DEFAULT_CONFIG.saleorApiUrl,
-      saleorChannel:
-        import.meta.env.VITE_SALEOR_CHANNEL || DEFAULT_CONFIG.saleorChannel,
-      saleorDocsUrl:
-        import.meta.env.VITE_SALEOR_DOCS_URL || DEFAULT_CONFIG.saleorDocsUrl,
-    }),
-    [],
-  );
+  const { request: graphQLRequest, config } = useGraphQL();
+  const { cart, updateCart, resetCart, summarizeCart } = useCart();
+  const { toast, showToast } = useToast();
 
-  const authHeader = useMemo(
-    () => (rawInitData ? `tma ${rawInitData}` : null),
-    [rawInitData],
-  );
-
-  const telegramUser = launchParams?.tgWebAppData?.user || null;
+  const telegramUser: TelegramUser | null =
+    launchParams?.tgWebAppData?.user || null;
 
   const [stores, setStores] = useState<Store[]>([]);
   const [storeEmptyMessage, setStoreEmptyMessage] = useState("Loading stores…");
@@ -104,16 +58,8 @@ export default function App() {
   const [productEmptyMessage, setProductEmptyMessage] = useState(
     "This category has no products right now. Try another one.",
   );
-  const [cart, setCart] = useState<Map<string, CartEntry>>(new Map());
-  const [currency, setCurrency] = useState<string | null>(null);
   const [orderSheetVisible, setOrderSheetVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const [toast, setToast] = useState<{ message: string; visible: boolean }>({
-    message: "",
-    visible: false,
-  });
-  const toastTimerRef = useRef<number | null>(null);
 
   const categories = useMemo(() => {
     const values = Array.from(productsByCategory.values());
@@ -132,61 +78,6 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? "dark" : "light";
   }, [isDark]);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) {
-        window.clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
-
-  const showToast = useCallback((message: string, duration = 2800) => {
-    setToast({ message, visible: true });
-    if (toastTimerRef.current) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    toastTimerRef.current = window.setTimeout(() => {
-      setToast((prev) => ({ ...prev, visible: false }));
-    }, duration);
-  }, []);
-
-  const graphQLRequest = useCallback(
-    async (query: string, variables: Record<string, unknown>) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (authHeader) {
-        headers.Authorization = authHeader;
-      }
-
-      const response = await fetch(config.saleorApiUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ query, variables }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(
-          `API request failed (${response.status}): ${
-            errorText || response.statusText
-          }`,
-        );
-      }
-
-      const payload = await response.json();
-      if (payload.errors?.length) {
-        throw new Error(
-          payload.errors
-            .map((err: GraphQLError) => err.message)
-            .filter(Boolean)
-            .join(", "),
-        );
-      }
-
-      return payload.data;
-    },
-    [authHeader, config.saleorApiUrl],
-  );
 
   const loadStores = useCallback(async () => {
     setStoreEmptyMessage("Loading stores…");
@@ -210,28 +101,40 @@ export default function App() {
       }
     `;
 
-    const data = await graphQLRequest(query, {
-      channel: config.saleorChannel,
-    });
+    try {
+      const data = await graphQLRequest<CollectionsResponse>(query, {
+        channel: config.saleorChannel,
+      });
 
-    const edges = data?.collections?.edges ?? [];
-    const nextStores = edges.map(({ node }: { node: any }) => ({
-      id: node.id,
-      slug: node.slug,
-      name: node.name,
-      description: node.seoDescription || node.description || "",
-      image: node.backgroundImage?.url || "",
-      imageAlt: node.backgroundImage?.alt || node.name || "",
-    }));
+      const edges = data?.collections?.edges ?? [];
+      const nextStores = edges
+        .filter((edge) => edge?.node)
+        .map((edge) => {
+          const node = edge.node!;
+          return {
+            id: node.id || "",
+            slug: node.slug || "",
+            name: node.name || "",
+            description: node.seoDescription || node.description || "",
+            image: node.backgroundImage?.url || "",
+            imageAlt: node.backgroundImage?.alt || node.name || "",
+          };
+        });
 
-    setStores(nextStores);
+      setStores(nextStores);
 
-    if (!nextStores.length) {
+      if (!nextStores.length) {
+        setStoreEmptyMessage(
+          "No active stores were found in this Saleor channel.",
+        );
+      } else {
+        setStoreEmptyMessage("");
+      }
+    } catch (error: any) {
+      console.error("Failed to load stores:", error);
       setStoreEmptyMessage(
-        "No active stores were found in this Saleor channel.",
+        "Unable to load stores. Pull to refresh or try again later.",
       );
-    } else {
-      setStoreEmptyMessage("");
     }
   }, [config.saleorChannel, graphQLRequest]);
 
@@ -289,69 +192,71 @@ export default function App() {
         }
       `;
 
-      const data = await graphQLRequest(query, {
-        id: store.id,
-        channel: config.saleorChannel,
-      });
-
-      const edges = data?.collection?.products?.edges ?? [];
-      const byCategory = new Map<string, Category>();
-
-      edges.forEach(({ node }: { node: any }) => {
-        const categoryId = node.category?.id || "uncategorized";
-        const categoryName = node.category?.name || "Menu";
-
-        if (!byCategory.has(categoryId)) {
-          byCategory.set(categoryId, {
-            id: categoryId,
-            name: categoryName,
-            products: [],
-          });
-        }
-
-        const variants = Array.isArray(node.variants)
-          ? node.variants
-          : node.variants?.edges?.map((edge: { node: any }) => edge.node) || [];
-
-        const selectedVariant = variants?.[0] || null;
-        const price =
-          selectedVariant?.pricing?.price?.gross ||
-          node.pricing?.priceRange?.start?.gross ||
-          null;
-
-        byCategory.get(categoryId)!.products.push({
-          id: node.id,
-          slug: node.slug,
-          name: node.name,
-          description: node.description || "",
-          image: node.thumbnail?.url || "",
-          imageAlt: node.thumbnail?.alt || node.name || "",
-          variantId: selectedVariant?.id || null,
-          variantName: selectedVariant?.name || "",
-          variantSku: selectedVariant?.sku || "",
-          quantityAvailable:
-            typeof selectedVariant?.quantityAvailable === "number"
-              ? selectedVariant.quantityAvailable
-              : null,
-          priceAmount: price?.amount ?? null,
-          priceCurrency: price?.currency ?? null,
+      try {
+        const data = await graphQLRequest<CollectionProductsResponse>(query, {
+          id: store.id,
+          channel: config.saleorChannel,
         });
-      });
 
-      setProductsByCategory(byCategory);
-      const firstCategory = Array.from(byCategory.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-      )[0];
+        const edges = data?.collection?.products?.edges ?? [];
+        const byCategory = new Map<string, Category>();
 
-      setSelectedCategoryId(firstCategory?.id || null);
+        edges.forEach((edge) => {
+          const node = edge?.node;
+          if (!node) return;
+          const categoryId = node.category?.id || "uncategorized";
+          const categoryName = node.category?.name || "Menu";
+
+          if (!byCategory.has(categoryId)) {
+            byCategory.set(categoryId, {
+              id: categoryId,
+              name: categoryName,
+              products: [],
+            });
+          }
+
+          const variants = Array.isArray(node.variants)
+            ? node.variants
+            : [];
+
+          const selectedVariant = variants?.[0] || null;
+          const price =
+            selectedVariant?.pricing?.price?.gross ||
+            node.pricing?.priceRange?.start?.gross ||
+            null;
+
+          byCategory.get(categoryId)!.products.push({
+            id: node.id || "",
+            slug: node.slug || "",
+            name: node.name || "",
+            description: node.description || "",
+            image: node.thumbnail?.url || "",
+            imageAlt: node.thumbnail?.alt || node.name || "",
+            variantId: selectedVariant?.id || null,
+            variantName: selectedVariant?.name || "",
+            variantSku: selectedVariant?.sku || "",
+            quantityAvailable:
+              typeof selectedVariant?.quantityAvailable === "number"
+                ? selectedVariant.quantityAvailable
+                : null,
+            priceAmount: price?.amount ?? null,
+            priceCurrency: price?.currency ?? null,
+          });
+        });
+
+        setProductsByCategory(byCategory);
+        const firstCategory = Array.from(byCategory.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        )[0];
+
+        setSelectedCategoryId(firstCategory?.id || null);
+      } catch (error: any) {
+        console.error("Failed to load products:", error);
+        throw error;
+      }
     },
     [config.saleorChannel, graphQLRequest],
   );
-
-  const resetCart = useCallback(() => {
-    setCart(new Map());
-    setCurrency(null);
-  }, []);
 
   const selectStore = useCallback(
     async (store: Store) => {
@@ -380,44 +285,6 @@ export default function App() {
     setProductsByCategory(new Map());
     resetCart();
   }, [resetCart]);
-
-  const updateCart = useCallback((product: Product, nextQuantity: number) => {
-    setCart((prev) => {
-      const next = new Map(prev);
-      if (nextQuantity <= 0) {
-        next.delete(product.id);
-      } else {
-        next.set(product.id, { product, quantity: nextQuantity });
-      }
-      return next;
-    });
-
-    if (product.priceCurrency) {
-      setCurrency(product.priceCurrency);
-    }
-  }, []);
-
-  const summarizeCart = useCallback((): CartSummary => {
-    let items = 0;
-    let amount = 0;
-    let nextCurrency = currency;
-
-    cart.forEach(({ product, quantity }) => {
-      if (product.priceAmount != null) {
-        items += quantity;
-        amount += product.priceAmount * quantity;
-        nextCurrency = product.priceCurrency || nextCurrency;
-      }
-    });
-
-    return {
-      items,
-      total: {
-        amount,
-        currency: nextCurrency || "USD",
-      },
-    };
-  }, [cart, currency]);
 
   const syncMainButton = useCallback(() => {
     if (!isTelegram) {
@@ -457,7 +324,7 @@ export default function App() {
 
   useEffect(() => {
     loadStores().catch((error) => {
-      console.error(error);
+      console.error("Failed to load stores:", error);
       setStoreEmptyMessage(
         "Unable to load stores. Pull to refresh or try again later.",
       );
@@ -519,7 +386,7 @@ export default function App() {
 
   useEffect(() => {
     syncMainButton();
-  }, [cart, currency, syncMainButton]);
+  }, [cart, syncMainButton]);
 
   const submitOrder = useCallback(async () => {
     if (isSubmitting) return;
@@ -587,16 +454,16 @@ export default function App() {
     };
 
     try {
-      const data = await graphQLRequest(mutation, { input: payload });
+      const data = await graphQLRequest<CheckoutCreateResponse>(mutation, {
+        input: payload,
+      });
       const result = data?.checkoutCreate;
       const errors = result?.errors || [];
 
       if (errors.length) {
         const errorMessage = errors
-          .map(
-            (err: { message?: string; code?: string }) =>
-              err.message || err.code,
-          )
+          .map((err) => err.message || err.code || "")
+          .filter(Boolean)
           .join(", ");
         throw new Error(errorMessage || "Saleor returned an error.");
       }
@@ -686,6 +553,7 @@ export default function App() {
                   className="store-card"
                   role="listitem"
                   onClick={() => selectStore(store)}
+                  aria-label={`Select store: ${store.name}`}
                 >
                   <div
                     className="store-card__cover"
@@ -790,6 +658,7 @@ export default function App() {
                         : ""
                     }`}
                     onClick={() => setSelectedCategoryId(category.id)}
+                    aria-pressed={selectedCategoryId === category.id}
                   >
                     {category.name}
                   </button>
@@ -844,6 +713,7 @@ export default function App() {
                               !product.variantId || product.priceAmount == null
                             }
                             onClick={() => updateCart(product, 1)}
+                            aria-label={`Add ${product.name} to cart`}
                           >
                             Add
                           </button>
@@ -871,6 +741,7 @@ export default function App() {
                   className="mini-cart__pill"
                   id="mini-cart-button"
                   onClick={openOrderSheet}
+                  aria-label={`View cart with ${summary.items} items`}
                 >
                   <span id="mini-cart-count">
                     {summary.items} item{summary.items === 1 ? "" : "s"}
@@ -904,7 +775,7 @@ export default function App() {
               type="button"
               className="order-sheet__close"
               id="order-close-btn"
-              aria-label="Close"
+              aria-label="Close order sheet"
               onClick={closeOrderSheet}
             >
               ×
@@ -966,6 +837,14 @@ export default function App() {
               id="order-submit-btn"
               disabled={summary.items === 0 || isSubmitting}
               onClick={submitOrder}
+              aria-label={
+                isSubmitting
+                  ? "Submitting order"
+                  : `Submit order for ${formatMoney(
+                      summary.total.amount,
+                      summary.total.currency,
+                    )}`
+              }
             >
               {isSubmitting ? "Submitting…" : "Submit order"}
             </button>
@@ -983,43 +862,4 @@ export default function App() {
       </div>
     </>
   );
-}
-
-function stripHtml(value: string) {
-  if (!value) return "";
-  const doc = new DOMParser().parseFromString(value, "text/html");
-  return doc.body.textContent || "";
-}
-
-function truncateText(value: string, maxLength: number) {
-  if (!value) return "";
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 1).trim()}…`;
-}
-
-function formatMoney(amount: number, currency: string) {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-      currencyDisplay: "symbol",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency || ""}`.trim();
-  }
-}
-
-function buildPseudoEmail(userData: { id?: number; username?: string } | null) {
-  if (!userData) {
-    return `guest+${Date.now()}@telegram.local`;
-  }
-  if (userData.username) {
-    return `${userData.username}@telegram.local`;
-  }
-  const safeId = userData.id
-    ? String(userData.id).replace(/\D+/g, "")
-    : Date.now();
-  return `user${safeId}@telegram.local`;
 }
